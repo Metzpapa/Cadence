@@ -1,12 +1,11 @@
- # video_editing_agent/tools/file_system_tool.py
+# video_editing_agent/tools/file_system_tool.py
 
 import os
 import logging
 from typing import List, Dict, Any, Optional
 from utils.ffmpeg_utils import get_video_metadata # To get metadata for each video file
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Common video file extensions to look for
 VIDEO_EXTENSIONS = ('.mp4', '.mov', '.avi', '.mkv', '.flv', '.wmv', '.webm')
@@ -32,16 +31,16 @@ def list_directory_contents_impl(video_directory_path: str) -> str:
         if the directory is not found or no video files are present.
     """
     if not os.path.isdir(video_directory_path):
-        logging.warning(f"Directory not found: {video_directory_path}")
+        logger.warning(f"Directory not found: {video_directory_path}")
         return f"Error: Directory '{video_directory_path}' not found."
 
     video_files_info: List[str] = []
     try:
-        logging.info(f"Scanning directory: {video_directory_path}")
+        logger.info(f"Scanning directory: {video_directory_path}")
         for item_name in sorted(os.listdir(video_directory_path)):
             item_path = os.path.join(video_directory_path, item_name)
             if os.path.isfile(item_path) and item_name.lower().endswith(VIDEO_EXTENSIONS):
-                logging.info(f"Processing video file: {item_name}")
+                logger.info(f"Processing video file: {item_name}")
                 metadata = get_video_metadata(item_path)
                 if metadata:
                     duration_formatted = format_duration(metadata.get("duration_seconds"))
@@ -63,13 +62,13 @@ def list_directory_contents_impl(video_directory_path: str) -> str:
                         f"    Metadata: Could not retrieve or not a valid video format."
                     )
             elif os.path.isfile(item_path):
-                logging.debug(f"Skipping non-video file: {item_name}")
+                logger.debug(f"Skipping non-video file: {item_name}")
             elif os.path.isdir(item_path):
-                logging.debug(f"Skipping sub-directory: {item_name}")
+                logger.debug(f"Skipping sub-directory: {item_name}")
 
 
     except Exception as e:
-        logging.error(f"Error accessing directory {video_directory_path}: {e}")
+        logger.error(f"Error accessing directory {video_directory_path}: {e}")
         return f"Error: Could not access directory contents. {str(e)}"
 
     if not video_files_info:

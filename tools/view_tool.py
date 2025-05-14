@@ -7,10 +7,10 @@ from typing import Dict, List, Any, Optional
 from utils.ffmpeg_utils import extract_frames, extract_audio_segment, get_video_metadata
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 DEFAULT_NUM_FRAMES = 3
+DEFAULT_QUALITY_LEVEL = "low" # New default
 
 def parse_time_to_seconds(time_str: str) -> Optional[float]:
     """
@@ -48,17 +48,21 @@ def view_video_segment_impl(
     file_name: str,
     start_time: str,
     end_time: str,
-    num_frames: Optional[int] = None
+    num_frames: Optional[int] = None,
+    quality: Optional[str] = None # New parameter
 ) -> Dict[str, Any]:
     """
     Implements the logic for the 'view_video_segment' tool.
-    Extracts frames and a single corresponding audio segment from a video.
+    Extracts frames (at specified quality) and a single corresponding audio segment.
     """
     if num_frames is None or num_frames <= 0:
         num_frames_to_extract = DEFAULT_NUM_FRAMES
         logger.info(f"num_frames not provided or invalid, defaulting to {DEFAULT_NUM_FRAMES}")
     else:
         num_frames_to_extract = num_frames
+
+    current_quality_level = quality if quality else DEFAULT_QUALITY_LEVEL
+    logger.info(f"Using quality level: {current_quality_level} for frame extraction.")
 
     full_video_path = os.path.join(video_directory_path, file_name)
 
@@ -117,30 +121,31 @@ def view_video_segment_impl(
 
     # --- Frame Extraction ---
     logger.info(f"Attempting to extract {num_frames_to_extract} frames for '{file_name}' "
-                 f"from {start_time_sec:.2f}s to {effective_end_time_sec:.2f}s.")
+                 f"from {start_time_sec:.2f}s to {effective_end_time_sec:.2f}s at '{current_quality_level}' quality.")
     extracted_image_bytes = extract_frames(
-        full_video_path,
-        start_time_sec,
-        effective_end_time_sec,
-        num_frames_to_extract
+        video_path=full_video_path,
+        start_time_sec=start_time_sec,
+        end_time_sec=effective_end_time_sec,
+        num_frames=num_frames_to_extract,
+        quality_level=current_quality_level # Pass quality level
     )
     result["images"] = extracted_image_bytes
     if not extracted_image_bytes:
         logger.warning(f"No frames were extracted for '{file_name}'.")
 
     # --- Audio Segment Extraction (Single Segment for the Requested Time Range) ---
-    requested_segment_duration_sec = effective_end_time_sec - start_time_sec # Use effective times for actual extraction
+    requested_segment_duration_sec = effective_end_time_sec - start_time_sec
     
-    if requested_segment_duration_sec > 0.001 and video_metadata.get("has_audio"):
+    if requested_segment_duration_sec >= 0 and video_metadata.get("has_audio"):
         logger.info(f"Extracting single audio segment for '{file_name}' "
                      f"from {start_time_sec:.2f}s to {effective_end_time_sec:.2f}s.")
         audio_bytes = extract_audio_segment(
             full_video_path,
             start_time_sec,
-            effective_end_time_sec # Use the same range as frames
+            effective_end_time_sec
         )
         if audio_bytes:
-            result["audios"].append(audio_bytes) # Append the single segment
+            result["audios"].append(audio_bytes)
         else:
             logger.warning(f"Failed to extract audio segment for '{file_name}'.")
     elif not video_metadata.get("has_audio"):
@@ -150,64 +155,55 @@ def view_video_segment_impl(
 
     # --- Final Status ---
     num_images_extracted = len(result["images"])
-    num_audios_extracted = len(result["audios"]) # Will be 0 or 1
+    num_audios_extracted = len(result["audios"])
 
     if num_images_extracted > 0 or num_audios_extracted > 0:
-        # --- DRASTICALLY SIMPLIFIED MESSAGE ---
         status_message = (
-            "Media has been extracted. Please analyze the provided image and audio parts and describe their content."
+            f"Media has been extracted at '{current_quality_level}' quality. "
+            "Please analyze the provided image and audio parts and describe their content."
         )
         result["status_json"] = {"status": "success", "message": status_message}
-        logger.info(f"View tool success for {file_name}: {num_images_extracted} frames, {num_audios_extracted} audio.")
+        logger.info(f"View tool success for {file_name}: {num_images_extracted} frames ({current_quality_level}), {num_audios_extracted} audio.")
     elif "error" not in result["status_json"]:
-        # --- SIMPLIFIED MESSAGE ---
         status_message = (
             "No media was extracted for the requested segment (it might be too short, empty, or have no audio track). "
             "There is nothing to describe from this segment."
         )
         result["status_json"] = {"status": "partial_success", "message": status_message}
         logger.warning(status_message)
-
     return result
 
 if __name__ == '__main__':
-    # --- Example Usage (requires a test video file and ffmpeg_utils.py) ---
+    logging.basicConfig(level=logging.DEBUG)
     test_video_dir = "." 
-    test_video_name = "test_video.mp4"
+    test_video_name = "test_video.mp4" # Ensure you have this or dummy_video.mp4
 
     if not os.path.exists(os.path.join(test_video_dir, test_video_name)):
         print(f"Test video '{test_video_name}' not found in '{test_video_dir}'. Skipping examples.")
     else:
         print(f"\n--- Testing view_video_segment_impl with: {test_video_name} ---")
 
-        print("\nTest 1: Valid segment (3 frames, 0s to 5s)")
-        output1 = view_video_segment_impl(
-            video_directory_path=test_video_dir,
-            file_name=test_video_name,
-            start_time="00:00:00",
-            end_time="00:00:05",
-            num_frames=3
-        )
-        print(f"Status: {output1['status_json']}")
-        print(f"Images extracted: {len(output1['images'])}")
-        print(f"Audios extracted: {len(output1['audios'])} (should be 0 or 1)")
-        if output1['images']:
-            with open("view_tool_test_frame_0.png", "wb") as f:
-                f.write(output1['images'][0])
-            print("Saved first extracted frame as view_tool_test_frame_0.png")
-        if output1['audios']:
-            with open("view_tool_test_audio_segment.wav", "wb") as f:
-                f.write(output1['audios'][0])
-            print("Saved extracted audio segment as view_tool_test_audio_segment.wav")
-
-        print("\nTest 2: Zero duration segment (start_time == end_time)")
-        output2 = view_video_segment_impl(
-            video_directory_path=test_video_dir,
-            file_name=test_video_name,
-            start_time="00:00:02",
-            end_time="00:00:02",
-            num_frames=1
-        )
-        print(f"Status: {output2['status_json']}")
-        print(f"Images extracted: {len(output2['images'])}") # Should be 1
-        print(f"Audios extracted: {len(output2['audios'])}") # Should be 0
+        qualities_to_test = ["low", "medium", "high", None] # None will use default
+        for q_idx, quality_setting in enumerate(qualities_to_test):
+            print(f"\nTest {q_idx+1}: Quality '{quality_setting if quality_setting else DEFAULT_QUALITY_LEVEL (default)}' (3 frames, 0s to 2s)")
+            output = view_video_segment_impl(
+                video_directory_path=test_video_dir,
+                file_name=test_video_name,
+                start_time="00:00:00",
+                end_time="00:00:02",
+                num_frames=3,
+                quality=quality_setting
+            )
+            print(f"Status: {output['status_json']}")
+            print(f"Images extracted: {len(output['images'])}")
+            print(f"Audios extracted: {len(output['audios'])}")
+            if output['images']:
+                for i, img_bytes in enumerate(output['images']):
+                    fname = f"view_tool_test_quality_{quality_setting if quality_setting else 'default'}_frame_{i}.png"
+                    with open(fname, "wb") as f:
+                        f.write(img_bytes)
+                    print(f"Saved extracted frame as {fname} (size: {len(img_bytes)} bytes)")
+            if output['audios'] and q_idx == 0: # Save audio only once
+                with open("view_tool_test_audio_segment.wav", "wb") as f:
+                    f.write(output['audios'][0])
+                print("Saved extracted audio segment as view_tool_test_audio_segment.wav")
